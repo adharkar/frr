@@ -1053,7 +1053,7 @@ static inline int zfpm_encode_mac(struct fpm_mac_info_t *mac, char *in_buf,
 		break;
 	case ZFPM_MSG_FORMAT_NETLINK:
 #ifdef HAVE_NETLINK
-		len = zfpm_netlink_encode_mac(mac, in_buf, in_buf_len);
+		len = zfpm_netlink_encode_mac_info(mac, in_buf, in_buf_len);
 		assert(fpm_msg_align(len) == len);
 		*msg_type = FPM_MSG_TYPE_NETLINK;
 #endif /* HAVE_NETLINK */
@@ -1105,7 +1105,7 @@ static int zfpm_build_mac_updates(void)
 		data = fpm_msg_data(hdr);
 		data_len = zfpm_encode_mac(mac, (char *)data, buf_end - data,
 						&msg_type);
-		assert(data_len);
+		/* assert(data_len); */
 
 		hdr->msg_type = msg_type;
 		msg_len = fpm_data_len_to_msg_len(data_len);
@@ -1471,17 +1471,22 @@ static int zfpm_trigger_update(struct route_node *rn, const char *reason)
 
 /*
  * Generate Key for FPM MAC info hash entry
- * Key is generated using MAC address and VNI id which should be sufficient
- * to provide uniqueness
  */
 static unsigned int zfpm_mac_info_hash_keymake(const void *p)
 {
 	struct fpm_mac_info_t *fpm_mac = (struct fpm_mac_info_t *)p;
-	uint32_t mac_key;
+	uint32_t mac_key, dst_key;
+	struct ipaddr *ip = &fpm_mac->dst;
 
 	mac_key = jhash(fpm_mac->macaddr.octet, ETH_ALEN, 0xa5a5a55a);
 
-	return jhash_2words(mac_key, fpm_mac->vni, 0);
+	if (IS_IPADDR_V4(ip))
+		dst_key = jhash_1word(ip->ipaddr_v4.s_addr, 0);
+	else
+		dst_key = jhash2(ip->ipaddr_v6.s6_addr32,
+				 array_size(ip->ipaddr_v6.s6_addr32), 0);
+
+	return jhash_3words(mac_key, dst_key, fpm_mac->vni, 0);
 }
 
 /*
@@ -1495,7 +1500,7 @@ static bool zfpm_mac_info_cmp(const void *p1, const void *p2)
 	if (memcmp(fpm_mac1->macaddr.octet, fpm_mac2->macaddr.octet, ETH_ALEN)
 			!= 0)
 		return false;
-	if (fpm_mac1->r_vtep_ip.s_addr != fpm_mac2->r_vtep_ip.s_addr)
+	if (memcmp(&fpm_mac1->dst, &fpm_mac2->dst, sizeof(struct ipaddr)) != 0)
 		return false;
 	if (fpm_mac1->vni != fpm_mac2->vni)
 		return false;
@@ -1522,7 +1527,7 @@ static void *zfpm_mac_info_alloc(void *p)
 	fpm_mac = XCALLOC(MTYPE_FPM_MAC_INFO, sizeof(struct fpm_mac_info_t));
 
 	memcpy(&fpm_mac->macaddr, &key->macaddr, ETH_ALEN);
-	memcpy(&fpm_mac->r_vtep_ip, &key->r_vtep_ip, sizeof(struct in_addr));
+	memcpy(&fpm_mac->dst, &key->dst, sizeof(struct ipaddr));
 	fpm_mac->vni = key->vni;
 
 	return (void *)fpm_mac;
@@ -1573,7 +1578,12 @@ static int zfpm_trigger_rmac_update(zebra_mac_t *rmac, zebra_l3vni_t *zl3vni,
 	memset(&key, 0, sizeof(struct fpm_mac_info_t));
 
 	memcpy(&key.macaddr, &rmac->macaddr, ETH_ALEN);
-	key.r_vtep_ip.s_addr = rmac->fwd_info.r_vtep_ip.s_addr;
+
+	/* At this point, we support only IPv4 VTEP address */
+	key.dst.ipa_type = IPADDR_V4;
+	memcpy(&key.dst.ip.addr, &rmac->fwd_info.r_vtep_ip.s_addr,
+	       sizeof(struct in_addr));
+
 	key.vni = zl3vni->vni;
 
 	/* Check if this MAC is already present in the queue. */
@@ -1623,6 +1633,7 @@ static int zfpm_trigger_rmac_update(zebra_mac_t *rmac, zebra_l3vni_t *zl3vni,
 	if (!fpm_mac)
 		return 0;
 
+	fpm_mac->info_type = MAC_INFO_TYPE_MAC;
 	fpm_mac->zebra_flags = rmac->flags;
 	fpm_mac->vxlan_if = vxlan_if ? vxlan_if->ifindex : 0;
 	fpm_mac->svi_if = svi_if ? svi_if->ifindex : 0;

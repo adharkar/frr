@@ -53,14 +53,26 @@ static inline void zfpm_debug(const char *format, ...)
 }
 #endif
 
-/* This structure contains the MAC addresses enqueued for FPM processing. */
+enum fpm_mac_info_type {
+	MAC_INFO_TYPE_MAC = 0,
+	MAC_INFO_TYPE_NEIGH
+};
+
+/*
+ * This structure contains the MAC/neighbor entries enqueued for FPM processing
+ * We use the same netlink message, i.e. ndmsg for MAC/neighbor entries.
+ * Thus, we can use the same structure to store info for MAC/neighbor.
+ */
 struct fpm_mac_info_t {
+	enum fpm_mac_info_type info_type; /* MAC or neighbor */
 	struct ethaddr macaddr;
+	struct ipaddr dst; /* IP address for neighbor,
+			    * VTEP address for remote MAC \
+			    */
 	uint32_t zebra_flags; /* Could be used to build FPM messages */
 	vni_t vni;
 	ifindex_t vxlan_if;
 	ifindex_t svi_if; /* L2 or L3 Bridge interface */
-	struct in_addr r_vtep_ip; /* Remote VTEP IP */
 
 	/* Linkage to put MAC on the FPM processing queue. */
 	TAILQ_ENTRY(fpm_mac_info_t) fpm_mac_q_entries;
@@ -92,8 +104,8 @@ extern int zfpm_netlink_encode_route(int cmd, rib_dest_t *dest,
 extern int zfpm_protobuf_encode_route(rib_dest_t *dest, struct route_entry *re,
 				      uint8_t *in_buf, size_t in_buf_len);
 
-extern int zfpm_netlink_encode_mac(struct fpm_mac_info_t *mac, char *in_buf,
-				   size_t in_buf_len);
+extern int zfpm_netlink_encode_mac_info(struct fpm_mac_info_t *mac,
+					char *in_buf, size_t in_buf_len);
 
 extern struct route_entry *zfpm_route_for_update(rib_dest_t *dest);
 

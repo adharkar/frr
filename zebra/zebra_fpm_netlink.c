@@ -583,15 +583,15 @@ int zfpm_netlink_encode_route(int cmd, rib_dest_t *dest, struct route_entry *re,
 /*
  * zfpm_netlink_encode_mac
  *
- * Create a netlink message corresponding to the given MAC.
+ * Create a netlink message(ndmsg) corresponding to the given MAC.
  *
  * Returns the number of bytes written to the buffer. 0 or a negative
  * value indicates an error.
  */
-int zfpm_netlink_encode_mac(struct fpm_mac_info_t *mac, char *in_buf,
+static int zfpm_netlink_encode_mac(struct fpm_mac_info_t *mac, char *in_buf,
 			    size_t in_buf_len)
 {
-	char buf1[ETHER_ADDR_STRLEN];
+	char buf1[ETHER_ADDR_STRLEN], buf2[ETHER_ADDR_STRLEN];
 	size_t buf_offset;
 
 	struct macmsg {
@@ -628,7 +628,9 @@ int zfpm_netlink_encode_mac(struct fpm_mac_info_t *mac, char *in_buf,
 
 	/* Add attributes */
 	addattr_l(&req->hdr, in_buf_len, NDA_LLADDR, &mac->macaddr, 6);
-	addattr_l(&req->hdr, in_buf_len, NDA_DST, &mac->r_vtep_ip, 4);
+
+	/* We support only IPv4 VTEP address */
+	addattr_l(&req->hdr, in_buf_len, NDA_DST, &mac->dst.ip.addr, 4);
 	addattr32(&req->hdr, in_buf_len, NDA_MASTER, mac->svi_if);
 	addattr32(&req->hdr, in_buf_len, NDA_VNI, mac->vni);
 
@@ -638,9 +640,39 @@ int zfpm_netlink_encode_mac(struct fpm_mac_info_t *mac, char *in_buf,
 		   nl_msg_type_to_str(req->hdr.nlmsg_type),
 		   nl_family_to_str(req->ndm.ndm_family), req->ndm.ndm_ifindex,
 		   prefix_mac2str(&mac->macaddr, buf1, sizeof(buf1)),
-		   inet_ntoa(mac->r_vtep_ip));
+		   ipaddr2str(&mac->dst, buf2, sizeof(buf2)));
 
 	return req->hdr.nlmsg_len;
+}
+
+/*
+ * zfpm_netlink_encode_neighbor
+ *
+ * Create a netlink message(ndmsg) corresponding to the given neighbor.
+ *
+ * Returns the number of bytes written to the buffer. 0 or a negative
+ * value indicates an error.
+ */
+static int zfpm_netlink_encode_neigh(struct fpm_mac_info_t *mac, char *in_buf,
+			      size_t in_buf_len)
+{
+	return 0;
+}
+
+/*
+ * zfpm_netlink_encode_mac_info
+ */
+int zfpm_netlink_encode_mac_info(struct fpm_mac_info_t *mac, char *in_buf,
+				 size_t in_buf_len)
+{
+	switch (mac->info_type) {
+	case MAC_INFO_TYPE_MAC:
+		return zfpm_netlink_encode_mac(mac, in_buf, in_buf_len);
+	case MAC_INFO_TYPE_NEIGH:
+		return zfpm_netlink_encode_neigh(mac, in_buf, in_buf_len);
+	}
+
+	return 0;
 }
 
 #endif /* HAVE_NETLINK */
