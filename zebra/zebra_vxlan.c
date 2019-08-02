@@ -63,6 +63,9 @@ DEFINE_MTYPE_STATIC(ZEBRA, ZVXLAN_SG, "zebra VxLAN multicast group");
 DEFINE_HOOK(zebra_rmac_update, (zebra_mac_t *rmac, zebra_l3vni_t *zl3vni,
 	    bool delete, const char *reason), (rmac, zl3vni, delete, reason))
 
+DEFINE_HOOK(zebra_mac_update, (zebra_mac_t *mac, bool delete,
+	    const char *reason), (mac, delete, reason))
+
 /* definitions */
 /* PMSI strings. */
 #define VXLAN_FLOOD_STR_NO_INFO "-"
@@ -117,7 +120,6 @@ static int zvni_neigh_uninstall(zebra_vni_t *zvni, zebra_neigh_t *n);
 static int zvni_neigh_probe(zebra_vni_t *zvni, zebra_neigh_t *n);
 static zebra_vni_t *zvni_from_svi(struct interface *ifp,
 				  struct interface *br_if);
-static struct interface *zvni_map_to_svi(vlanid_t vid, struct interface *br_if);
 
 /* l3-vni next-hop neigh related APIs */
 static zebra_neigh_t *zl3vni_nh_lookup(zebra_l3vni_t *zl3vni,
@@ -3671,7 +3673,7 @@ static zebra_vni_t *zvni_from_svi(struct interface *ifp,
  * (b) In the case of a VLAN-unaware bridge, the SVI is the bridge inteface
  * itself
  */
-static struct interface *zvni_map_to_svi(vlanid_t vid, struct interface *br_if)
+struct interface *zvni_map_to_svi(vlanid_t vid, struct interface *br_if)
 {
 	struct zebra_ns *zns;
 	struct route_node *rn;
@@ -3739,6 +3741,9 @@ static int zvni_mac_install(zebra_vni_t *zvni, zebra_mac_t *mac)
 	sticky = !!CHECK_FLAG(mac->flags,
 			 (ZEBRA_MAC_STICKY | ZEBRA_MAC_REMOTE_DEF_GW));
 
+	/* Send MAC for FPM processing */
+	hook_call(zebra_mac_update, mac, false, "add MAC entry");
+
 	return kernel_add_mac(zvni->vxlan_if, vxl->access_vlan, &mac->macaddr,
 			      mac->fwd_info.r_vtep_ip, sticky);
 }
@@ -3769,6 +3774,9 @@ static int zvni_mac_uninstall(zebra_vni_t *zvni, zebra_mac_t *mac)
 
 	ifp = zvni->vxlan_if;
 	vtep_ip = mac->fwd_info.r_vtep_ip;
+
+	/* Send MAC for FPM processing */
+	hook_call(zebra_mac_update, mac, true, "delete MAC entry");
 
 	return kernel_del_mac(ifp, vxl->access_vlan, &mac->macaddr, vtep_ip);
 }
@@ -4474,6 +4482,9 @@ static int zl3vni_rmac_install(zebra_l3vni_t *zl3vni, zebra_mac_t *zrmac)
 
 	vxl = &zif->l2info.vxl;
 
+	/* Send RMAC for FPM processing */
+	hook_call(zebra_rmac_update, zrmac, zl3vni, false, "add RMAC entry");
+
 	return kernel_add_mac(zl3vni->vxlan_if, vxl->access_vlan,
 			      &zrmac->macaddr, zrmac->fwd_info.r_vtep_ip, 0);
 }
@@ -4505,6 +4516,9 @@ static int zl3vni_rmac_uninstall(zebra_l3vni_t *zl3vni, zebra_mac_t *zrmac)
 
 	vxl = &zif->l2info.vxl;
 
+	/* Send RMAC for FPM processing */
+	hook_call(zebra_rmac_update, zrmac, zl3vni, true, "delete RMAC entry");
+
 	return kernel_del_mac(zl3vni->vxlan_if, vxl->access_vlan,
 			      &zrmac->macaddr, zrmac->fwd_info.r_vtep_ip);
 }
@@ -4533,10 +4547,6 @@ static int zl3vni_remote_rmac_add(zebra_l3vni_t *zl3vni, struct ethaddr *rmac,
 		memset(&zrmac->fwd_info, 0, sizeof(zrmac->fwd_info));
 		zrmac->fwd_info.r_vtep_ip = vtep_ip->ipaddr_v4;
 
-		/* Send RMAC for FPM processing */
-		hook_call(zebra_rmac_update, zrmac, zl3vni, false,
-			  "new RMAC added");
-
 		/* install rmac in kernel */
 		zl3vni_rmac_install(zl3vni, zrmac);
 	}
@@ -4556,10 +4566,6 @@ static void zl3vni_remote_rmac_del(zebra_l3vni_t *zl3vni, zebra_mac_t *zrmac,
 	if (RB_EMPTY(host_rb_tree_entry, &zrmac->host_rb)) {
 		/* uninstall from kernel */
 		zl3vni_rmac_uninstall(zl3vni, zrmac);
-
-		/* Send RMAC for FPM processing */
-		hook_call(zebra_rmac_update, zrmac, zl3vni, true,
-			  "RMAC deleted");
 
 		/* del the rmac entry */
 		zl3vni_rmac_del(zl3vni, zrmac);
@@ -5171,9 +5177,6 @@ static void zl3vni_del_rmac_hash_entry(struct hash_bucket *bucket, void *ctx)
 	zrmac = (zebra_mac_t *)bucket->data;
 	zl3vni = (zebra_l3vni_t *)ctx;
 	zl3vni_rmac_uninstall(zl3vni, zrmac);
-
-	/* Send RMAC for FPM processing */
-	hook_call(zebra_rmac_update, zrmac, zl3vni, true, "RMAC deleted");
 
 	zl3vni_rmac_del(zl3vni, zrmac);
 }
