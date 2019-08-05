@@ -591,7 +591,7 @@ int zfpm_netlink_encode_route(int cmd, rib_dest_t *dest, struct route_entry *re,
 static int zfpm_netlink_encode_mac(struct fpm_mac_info_t *mac, char *in_buf,
 			    size_t in_buf_len)
 {
-	char buf1[ETHER_ADDR_STRLEN], buf2[ETHER_ADDR_STRLEN];
+	char buf1[ETHER_ADDR_STRLEN], buf2[INET6_ADDRSTRLEN];
 	size_t buf_offset;
 
 	struct macmsg {
@@ -653,10 +653,59 @@ static int zfpm_netlink_encode_mac(struct fpm_mac_info_t *mac, char *in_buf,
  * Returns the number of bytes written to the buffer. 0 or a negative
  * value indicates an error.
  */
-static int zfpm_netlink_encode_neigh(struct fpm_mac_info_t *mac, char *in_buf,
-			      size_t in_buf_len)
+static int zfpm_netlink_encode_neigh(struct fpm_mac_info_t *n, char *in_buf,
+				     size_t in_buf_len)
 {
-	return 0;
+	char buf1[ETHER_ADDR_STRLEN], buf2[INET6_ADDRSTRLEN];
+	size_t buf_offset;
+	int ipa_len;
+
+	struct neighmsg {
+		struct nlmsghdr hdr;
+		struct ndmsg ndm;
+		char buf[0];
+	} *req;
+	req = (void *)in_buf;
+
+	buf_offset = offsetof(struct neighmsg, buf);
+	if (in_buf_len < buf_offset)
+		return 0;
+	memset(req, 0, buf_offset);
+
+	/* Construct nlmsg header */
+	req->hdr.nlmsg_len = NLMSG_LENGTH(sizeof(struct ndmsg));
+	req->hdr.nlmsg_type = CHECK_FLAG(n->fpm_flags, ZEBRA_MAC_DELETE_FPM) ?
+			      RTM_DELNEIGH : RTM_NEWNEIGH;
+	req->hdr.nlmsg_flags = NLM_F_REQUEST;
+	if (req->hdr.nlmsg_type == RTM_NEWNEIGH)
+		req->hdr.nlmsg_flags |= (NLM_F_CREATE | NLM_F_REPLACE);
+
+	/* Construct ndmsg */
+	req->ndm.ndm_family = IS_IPADDR_V4(&n->dst) ? AF_INET : AF_INET6;
+	if (!CHECK_FLAG(n->fpm_flags, ZEBRA_MAC_DELETE_FPM))
+		req->ndm.ndm_state = NUD_NOARP;
+	req->ndm.ndm_ifindex = n->vxlan_if;
+	req->ndm.ndm_type = RTN_UNICAST;
+	req->ndm.ndm_flags = NTF_EXT_LEARNED;
+	if (n->zebra_flags & ZEBRA_NEIGH_ROUTER_FLAG)
+		req->ndm.ndm_flags |= NTF_ROUTER;
+
+	/* Add attributes */
+	ipa_len = IS_IPADDR_V4(&n->dst) ? IPV4_MAX_BYTELEN : IPV6_MAX_BYTELEN;
+	addattr_l(&req->hdr, in_buf_len, NDA_DST, &n->dst.ip.addr, ipa_len);
+	addattr_l(&req->hdr, in_buf_len, NDA_LLADDR, &n->macaddr, 6);
+	addattr32(&req->hdr, in_buf_len, NDA_MASTER, n->svi_if);
+	addattr32(&req->hdr, in_buf_len, NDA_VNI, n->vni);
+
+	assert(req->hdr.nlmsg_len < in_buf_len);
+
+	zfpm_debug("Tx %s family %s ifindex %u MAC %s DEST %s",
+		   nl_msg_type_to_str(req->hdr.nlmsg_type),
+		   nl_family_to_str(req->ndm.ndm_family), req->ndm.ndm_ifindex,
+		   prefix_mac2str(&n->macaddr, buf1, sizeof(buf1)),
+		   ipaddr2str(&n->dst, buf2, sizeof(buf2)));
+
+	return req->hdr.nlmsg_len;
 }
 
 /*

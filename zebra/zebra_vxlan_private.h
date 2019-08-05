@@ -441,6 +441,9 @@ DECLARE_HOOK(zebra_rmac_update, (zebra_mac_t *rmac, zebra_l3vni_t *zl3vni,
 DECLARE_HOOK(zebra_mac_update, (zebra_mac_t *mac, bool delete,
 	    const char *reason), (mac, delete, reason))
 
+DECLARE_HOOK(zebra_neigh_update, (zebra_neigh_t *n, bool delete,
+	    const char *reason), (n, delete, reason))
+
 #ifdef __cplusplus
 }
 #endif

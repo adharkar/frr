@@ -1107,7 +1107,7 @@ static int zfpm_build_mac_updates(void)
 		data = fpm_msg_data(hdr);
 		data_len = zfpm_encode_mac(mac, (char *)data, buf_end - data,
 						&msg_type);
-		/* assert(data_len); */
+		assert(data_len);
 
 		hdr->msg_type = msg_type;
 		msg_len = fpm_data_len_to_msg_len(data_len);
@@ -1803,6 +1803,121 @@ static int zfpm_trigger_mac_update(zebra_mac_t *mac, bool delete,
 }
 
 /*
+ * zfpm_trigger_neigh_update
+ *
+ * Zebra code invokes this function to indicate that we should
+ * send an update to FPM for given neighbor entry.
+ *
+ * This function checks if we already have enqueued an update for the neighbor,
+ * If yes, update the same fpm_mac_info_t. Else, create and enqueue an update.
+ */
+static int zfpm_trigger_neigh_update(zebra_neigh_t *n, bool delete,
+				     const char *reason)
+{
+	char buf1[ETHER_ADDR_STRLEN], buf2[INET6_ADDRSTRLEN];
+	struct fpm_mac_info_t *fpm_neigh, key;
+	struct interface *vxlan_if, *svi_if;
+	zebra_vni_t *zvni;
+	struct zebra_if *zif;
+	struct zebra_l2info_vxlan *vxl;
+
+	/*
+	 * Ignore if the connection is down. We will update the FPM about
+	 * all destinations once the connection comes up.
+	 */
+	if (!zfpm_conn_is_up())
+		return 0;
+
+	if (reason) {
+		zfpm_debug("triggering update to FPM - Reason: %s - ip: %s MAC: %s",
+			reason,
+			ipaddr2str(&n->ip, buf2, sizeof(buf2)),
+			prefix_mac2str(&n->emac, buf1, sizeof(buf1)));
+	}
+
+	zvni = n->zvni;
+	vxlan_if = zvni->vxlan_if;
+	zif = vxlan_if->info;
+	if (!zif)
+		return 0;
+	vxl = &zif->l2info.vxl;
+	svi_if = zvni_map_to_svi(vxl->access_vlan, zif->brslave_info.br_if);
+
+	memset(&key, 0, sizeof(struct fpm_mac_info_t));
+
+	memcpy(&key.macaddr, &n->emac, ETH_ALEN);
+	memcpy(&key.dst, &n->ip, sizeof(struct ipaddr));
+	key.vni = zvni->vni;
+
+	/* Check if this neighbor is already present in the queue. */
+	fpm_neigh = zfpm_mac_info_lookup(&key);
+
+	if (fpm_neigh) {
+		if (!!CHECK_FLAG(fpm_neigh->fpm_flags, ZEBRA_MAC_DELETE_FPM)
+		    == delete) {
+			/*
+			 * Neighbor is already present in the queue
+			 * with the same op as this one. Do nothing
+			 */
+			zfpm_g->stats.redundant_triggers++;
+			return 0;
+		}
+
+		/*
+		 * A new op for an already existing fpm_mac_info_t node.
+		 * Update the existing node for the new op.
+		 */
+		if (!delete) {
+			/*
+			 * New op is "add". Previous op is "delete".
+			 * Update the fpm_mac_info_t for the new add.
+			 */
+			fpm_neigh->zebra_flags = n->flags;
+
+			fpm_neigh->vxlan_if = vxlan_if ? vxlan_if->ifindex : 0;
+			fpm_neigh->svi_if = svi_if ? svi_if->ifindex : 0;
+
+			UNSET_FLAG(fpm_neigh->fpm_flags, ZEBRA_MAC_DELETE_FPM);
+			SET_FLAG(fpm_neigh->fpm_flags, ZEBRA_MAC_UPDATE_FPM);
+		} else {
+			/*
+			 * New op is "delete". Previous op is "add".
+			 * Thus, no-op. Unset ZEBRA_MAC_UPDATE_FPM flag.
+			 */
+			SET_FLAG(fpm_neigh->fpm_flags, ZEBRA_MAC_DELETE_FPM);
+			UNSET_FLAG(fpm_neigh->fpm_flags, ZEBRA_MAC_UPDATE_FPM);
+		}
+
+		return 0;
+	}
+
+	fpm_neigh = hash_get(zfpm_g->fpm_mac_info_table, &key,
+			     zfpm_mac_info_alloc);
+	if (!fpm_neigh)
+		return 0;
+
+	fpm_neigh->info_type = MAC_INFO_TYPE_NEIGH;
+	fpm_neigh->zebra_flags = n->flags;
+	fpm_neigh->vxlan_if = vxlan_if ? vxlan_if->ifindex : 0;
+	fpm_neigh->svi_if = svi_if ? svi_if->ifindex : 0;
+
+	SET_FLAG(fpm_neigh->fpm_flags, ZEBRA_MAC_UPDATE_FPM);
+	if (delete)
+		SET_FLAG(fpm_neigh->fpm_flags, ZEBRA_MAC_DELETE_FPM);
+
+	TAILQ_INSERT_TAIL(&zfpm_g->mac_q, fpm_neigh, fpm_mac_q_entries);
+
+	zfpm_g->stats.updates_triggered++;
+
+	/* If writes are already enabled, return. */
+	if (zfpm_g->t_write)
+		return 0;
+
+	zfpm_write_on();
+	return 0;
+}
+
+/*
  * zfpm_stats_timer_cb
  */
 static int zfpm_stats_timer_cb(struct thread *t)
@@ -2166,6 +2281,7 @@ static int zebra_fpm_module_init(void)
 	hook_register(rib_update, zfpm_trigger_update);
 	hook_register(zebra_rmac_update, zfpm_trigger_rmac_update);
 	hook_register(zebra_mac_update, zfpm_trigger_mac_update);
+	hook_register(zebra_neigh_update, zfpm_trigger_neigh_update);
 	hook_register(frr_late_init, zfpm_init);
 	return 0;
 }

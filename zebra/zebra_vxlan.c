@@ -66,6 +66,9 @@ DEFINE_HOOK(zebra_rmac_update, (zebra_mac_t *rmac, zebra_l3vni_t *zl3vni,
 DEFINE_HOOK(zebra_mac_update, (zebra_mac_t *mac, bool delete,
 	    const char *reason), (mac, delete, reason))
 
+DEFINE_HOOK(zebra_neigh_update, (zebra_neigh_t *n, bool delete,
+	    const char *reason), (n, delete, reason))
+
 /* definitions */
 /* PMSI strings. */
 #define VXLAN_FLOOD_STR_NO_INFO "-"
@@ -2538,8 +2541,13 @@ static int zvni_neigh_install(zebra_vni_t *zvni, zebra_neigh_t *n)
 	if (n->flags & ZEBRA_NEIGH_ROUTER_FLAG)
 		flags |= NTF_ROUTER;
 	ZEBRA_NEIGH_SET_ACTIVE(n);
+
 	ret = kernel_add_neigh(vlan_if, &n->ip, &n->emac, flags);
 #endif
+
+	/* Send neighbor for FPM processing */
+	hook_call(zebra_neigh_update, n, false, "add neighbor entry");
+
 	return ret;
 }
 
@@ -2571,6 +2579,10 @@ static int zvni_neigh_uninstall(zebra_vni_t *zvni, zebra_neigh_t *n)
 
 	ZEBRA_NEIGH_SET_INACTIVE(n);
 	n->loc_seq = 0;
+
+	/* Send neighbor for FPM processing */
+	hook_call(zebra_neigh_update, n, true, "delete neighbor entry");
+
 	return kernel_del_neigh(vlan_if, &n->ip);
 }
 
