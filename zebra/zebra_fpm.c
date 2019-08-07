@@ -73,6 +73,7 @@ DEFINE_MTYPE_STATIC(ZEBRA, FPM_MAC_INFO, "FPM_MAC_INFO");
 #define FPM_MAX_MAC_MSG_LEN 512
 
 static void zfpm_iterate_rmac_table(struct hash_backet *backet, void *args);
+static void zfpm_iterate_vni_table(struct hash_backet *backet, void *args);
 
 /*
  * Structure that holds state for iterating over all route_node
@@ -511,6 +512,7 @@ static int zfpm_conn_up_thread_cb(struct thread *thread)
 	struct route_node *rnode;
 	zfpm_rnodes_iter_t *iter;
 	rib_dest_t *dest;
+	struct zebra_vrf *evpn_vrf = zrouter.evpn_vrf;
 
 	zfpm_g->t_conn_up = NULL;
 
@@ -525,6 +527,11 @@ static int zfpm_conn_up_thread_cb(struct thread *thread)
 
 	/* Enqueue FPM updates for all the RMAC entries */
 	hash_iterate(zrouter.l3vni_table, zfpm_iterate_rmac_table, NULL);
+
+	/* Enqueue FPM updates for all the MAC/Neighbor entries */
+	if (evpn_vrf)
+		hash_iterate(evpn_vrf->vni_table, zfpm_iterate_vni_table, NULL);
+
 
 	while ((rnode = zfpm_rnodes_iter_next(iter))) {
 		dest = rib_dest_from_rnode(rnode);
@@ -1709,6 +1716,9 @@ static int zfpm_trigger_mac_update(zebra_mac_t *mac, bool delete,
 	if (!zfpm_conn_is_up())
 		return 0;
 
+	if (!CHECK_FLAG(mac->flags, ZEBRA_MAC_REMOTE))
+		return 0;
+
 	if (reason) {
 		zfpm_debug("triggering update to FPM - Reason: %s - %s",
 			reason,
@@ -1803,6 +1813,18 @@ static int zfpm_trigger_mac_update(zebra_mac_t *mac, bool delete,
 }
 
 /*
+ * This function is called when the FPM connections is established.
+ * Iterate over all the MAC entries for the given VNI
+ * and enqueue the MAC for FPM processing.
+ */
+static void zfpm_trigger_mac_update_wrapper(struct hash_backet *backet,
+					    void *args)
+{
+	zfpm_trigger_mac_update((zebra_mac_t *)backet->data, false,
+				"add MAC entry");
+}
+
+/*
  * zfpm_trigger_neigh_update
  *
  * Zebra code invokes this function to indicate that we should
@@ -1826,6 +1848,9 @@ static int zfpm_trigger_neigh_update(zebra_neigh_t *n, bool delete,
 	 * all destinations once the connection comes up.
 	 */
 	if (!zfpm_conn_is_up())
+		return 0;
+
+	if (!CHECK_FLAG(n->flags, ZEBRA_NEIGH_REMOTE))
 		return 0;
 
 	if (reason) {
@@ -1915,6 +1940,33 @@ static int zfpm_trigger_neigh_update(zebra_neigh_t *n, bool delete,
 
 	zfpm_write_on();
 	return 0;
+}
+
+/*
+ * This function is called when the FPM connections is established.
+ * Iterate over all the neighbor entries for the given VNI
+ * and enqueue the neighbor for FPM processing.
+ */
+static void zfpm_trigger_neigh_update_wrapper(struct hash_backet *backet,
+					      void *args)
+{
+	zfpm_trigger_neigh_update((zebra_neigh_t *)backet->data, false,
+				  "add neighbor entry");
+}
+
+/*
+ * This function is called when the FPM connections is established.
+ * This function iterates over all the VNIs to trigger
+ * FPM updates for MACs and neighbor entries currently available.
+ */
+static void zfpm_iterate_vni_table(struct hash_backet *backet, void *args)
+{
+	zebra_vni_t *zvni = (zebra_vni_t *)backet->data;
+
+	hash_iterate(zvni->mac_table, zfpm_trigger_mac_update_wrapper, NULL);
+
+	hash_iterate(zvni->neigh_table, zfpm_trigger_neigh_update_wrapper,
+		     NULL);
 }
 
 /*
