@@ -34,6 +34,9 @@
 
 #define MAX_ET 0xffffffff
 
+#define GATEWAY_IP_STRLEN INET6_ADDRSTRLEN
+#define OVERLAY_INDEX_STRLEN (GATEWAY_IP_STRLEN + 14)
+
 unsigned long eth_tag_id;
 struct attr;
 
@@ -47,7 +50,14 @@ union gw_addr {
 	struct in6_addr ipv6;
 };
 
+enum overlay_index_type {
+	OVERLAY_INDEX_TYPE_NONE,
+	OVERLAY_INDEX_GATEWAY_IP,
+	OVERLAY_INDEX_ESI,
+};
+
 struct bgp_route_evpn {
+	enum overlay_index_type type;
 	struct eth_segment_id eth_s_id;
 	union gw_addr gw_ip;
 };

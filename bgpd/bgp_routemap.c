@@ -969,6 +969,70 @@ struct route_map_rule_cmd route_match_evpn_route_type_cmd = {
 	"evpn route-type", route_match_evpn_route_type,
 	route_match_evpn_route_type_compile, route_match_evpn_route_type_free};
 
+static enum route_map_cmd_result_t
+route_set_evpn_gateway_ip(void *rule, const struct prefix *prefix,
+			  route_map_object_t type, void *object)
+{
+	struct ipaddr *gw_ip = rule;
+	struct bgp_path_info *path;
+	struct prefix_evpn *evp;
+
+	if (type != RMAP_BGP)
+		return RMAP_OKAY;
+
+	if (prefix->family != AF_EVPN)
+		return RMAP_OKAY;
+
+	evp = (struct prefix_evpn *)prefix;
+	if (evp->prefix.route_type != BGP_EVPN_IP_PREFIX_ROUTE)
+		return RMAP_OKAY;
+
+	if ((is_evpn_prefix_ipaddr_v4(evp) && IPADDRSZ(gw_ip) != 4) ||
+	    (is_evpn_prefix_ipaddr_v6(evp) && IPADDRSZ(gw_ip) != 16))
+		return RMAP_OKAY;
+
+	path = object;
+
+	/* Set gateway-ip value. */
+	path->attr->evpn_overlay.type = OVERLAY_INDEX_GATEWAY_IP;
+	memcpy(&path->attr->evpn_overlay.gw_ip, &gw_ip->ip.addr,
+	       IPADDRSZ(gw_ip));
+
+	return RMAP_OKAY;
+}
+
+/*
+ * Route map `evpn gateway-ip' compile function.
+ * Given string is converted to struct ipaddr structure
+ */
+static void *route_set_evpn_gateway_ip_compile(const char *arg)
+{
+	struct ipaddr *gw_ip = NULL;
+	int ret;
+
+	gw_ip = XMALLOC(MTYPE_ROUTE_MAP_COMPILED, sizeof(struct ipaddr));
+
+	ret = str2ipaddr(arg, gw_ip);
+	if (ret < 0) {
+		XFREE(MTYPE_ROUTE_MAP_COMPILED, gw_ip);
+		return NULL;
+	}
+	return gw_ip;
+}
+
+/* Free route map's compiled `evpn gateway_ip' value. */
+static void route_set_evpn_gateway_ip_free(void *rule)
+{
+	struct ipaddr *gw_ip = rule;
+
+	XFREE(MTYPE_ROUTE_MAP_COMPILED, gw_ip);
+}
+
+/* Route map commands for set evpn gateway-ip. */
+struct route_map_rule_cmd route_set_evpn_gateway_ip_cmd = {
+	"evpn gateway-ip", route_set_evpn_gateway_ip,
+	route_set_evpn_gateway_ip_compile, route_set_evpn_gateway_ip_free};
+
 /* Route map commands for VRF route leak with source vrf matching */
 static enum route_map_cmd_result_t
 route_match_vrl_source_vrf(void *rule, const struct prefix *prefix,
@@ -3640,6 +3704,83 @@ DEFUN (no_match_evpn_default_route,
 				      RMAP_EVENT_MATCH_DELETED);
 }
 
+DEFUN (set_evpn_gw_ip,
+       set_evpn_gw_ip_cmd,
+       "set evpn gateway-ip <A.B.C.D|X:X::X:X>",
+       SET_STR
+       EVPN_HELP_STR
+       "Set gateway-ip for prefix advertisement route\n"
+       "IP address for gateway-ip\n"
+       "IPv6 address for gateway-ip\n")
+{
+	int ret;
+	union sockunion su;
+
+	ret = str2sockunion(argv[3]->arg, &su);
+	if (ret < 0) {
+		vty_out(vty, "%% Malformed gateway-ip\n");
+		return CMD_WARNING_CONFIG_FAILED;
+	}
+
+	if (sockunion_family(&su) == AF_INET) {
+		if (su.sin.sin_addr.s_addr == 0
+		    || IPV4_CLASS_DE(ntohl(su.sin.sin_addr.s_addr))) {
+			vty_out(vty,
+				"%% Gateway-ip cannot be 0.0.0.0, multicast or reserved\n");
+			return CMD_WARNING_CONFIG_FAILED;
+		}
+	} else if (sockunion_family(&su) == AF_INET6) {
+		if (IN6_IS_ADDR_LINKLOCAL(&su.sin6.sin6_addr)
+		    || IN6_IS_ADDR_MULTICAST(&su.sin6.sin6_addr)) {
+			vty_out(vty,
+				"%% Gateway-ip cannot be a linklocal or multicast address\n");
+			return CMD_WARNING_CONFIG_FAILED;
+		}
+	}
+
+	return generic_set_add(vty, VTY_GET_CONTEXT(route_map_index),
+			       "evpn gateway-ip", argv[3]->arg);
+}
+
+DEFUN (no_set_evpn_gw_ip,
+       no_set_evpn_gw_ip_cmd,
+       "no set evpn gateway-ip <A.B.C.D|X:X::X:X>",
+       NO_STR
+       SET_STR
+       EVPN_HELP_STR
+       "Set gateway-ip for prefix advertisement route\n"
+       "IP address for gateway-ip\n"
+       "IPv6 address for gateway-ip\n")
+{
+	int ret;
+	union sockunion su;
+
+	ret = str2sockunion(argv[4]->arg, &su);
+	if (ret < 0) {
+		vty_out(vty, "%% Malformed gateway-ip\n");
+		return CMD_WARNING_CONFIG_FAILED;
+	}
+
+	if (sockunion_family(&su) == AF_INET) {
+		if (su.sin.sin_addr.s_addr == 0
+		    || IPV4_CLASS_DE(ntohl(su.sin.sin_addr.s_addr))) {
+			vty_out(vty,
+				"%% Gateway-ip cannot be 0.0.0.0, multicast or reserved\n");
+			return CMD_WARNING_CONFIG_FAILED;
+		}
+	} else if (sockunion_family(&su) == AF_INET6) {
+		if (IN6_IS_ADDR_LINKLOCAL(&su.sin6.sin6_addr)
+		    || IN6_IS_ADDR_MULTICAST(&su.sin6.sin6_addr)) {
+			vty_out(vty,
+				"%% Gateway-ip cannot be a linklocal or multicast address\n");
+			return CMD_WARNING_CONFIG_FAILED;
+		}
+	}
+
+	return generic_set_delete(vty, VTY_GET_CONTEXT(route_map_index),
+				  "evpn gateway-ip", argv[4]->arg);
+}
+
 DEFPY(match_vrl_source_vrf,
       match_vrl_source_vrf_cmd,
       "match source-vrf NAME$vrf_name",
@@ -5167,6 +5308,7 @@ void bgp_route_map_init(void)
 	route_map_install_match(&route_match_evpn_default_route_cmd);
 	route_map_install_match(&route_match_vrl_source_vrf_cmd);
 
+	route_map_install_set(&route_set_evpn_gateway_ip_cmd);
 	route_map_install_set(&route_set_ip_nexthop_cmd);
 	route_map_install_set(&route_set_local_pref_cmd);
 	route_map_install_set(&route_set_weight_cmd);
@@ -5205,6 +5347,8 @@ void bgp_route_map_init(void)
 	install_element(RMAP_NODE, &no_match_evpn_route_type_cmd);
 	install_element(RMAP_NODE, &match_evpn_default_route_cmd);
 	install_element(RMAP_NODE, &no_match_evpn_default_route_cmd);
+	install_element(RMAP_NODE, &set_evpn_gw_ip_cmd);
+	install_element(RMAP_NODE, &no_set_evpn_gw_ip_cmd);
 	install_element(RMAP_NODE, &match_vrl_source_vrf_cmd);
 	install_element(RMAP_NODE, &no_match_vrl_source_vrf_cmd);
 
