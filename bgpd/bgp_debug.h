@@ -37,7 +37,8 @@
 #define DUMP_DETAIL   32
 
 /* RD + Prefix + Path-Id */
-#define BGP_PRD_PATH_STRLEN (PREFIX_STRLEN + RD_ADDRSTRLEN + 20)
+#define BGP_PRD_PATH_STRLEN (PREFIX_STRLEN + RD_ADDRSTRLEN \
+			     + OVERLAY_INDEX_STRLEN + 20)
 
 extern int dump_open;
 extern int dump_update;
@@ -170,7 +171,8 @@ extern int bgp_debug_zebra(struct prefix *p);
 
 extern const char *bgp_debug_rdpfxpath2str(afi_t, safi_t, struct prefix_rd *,
 					   union prefixconstptr, mpls_label_t *,
-					   uint32_t, int, uint32_t, char *,
+					   uint32_t, int, uint32_t,
+					   struct bgp_route_evpn *, char *,
 					   int);
 const char *bgp_notify_admin_message(char *buf, size_t bufsz, uint8_t *data,
 				     size_t datalen);

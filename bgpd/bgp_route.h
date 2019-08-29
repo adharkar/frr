@@ -529,10 +529,12 @@ extern int bgp_static_unset_safi(afi_t afi, safi_t safi, struct vty *,
 /* this is primarily for MPLS-VPN */
 extern int bgp_update(struct peer *, struct prefix *, uint32_t, struct attr *,
 		      afi_t, safi_t, int, int, struct prefix_rd *,
-		      mpls_label_t *, uint32_t, int, struct bgp_route_evpn *);
+		      mpls_label_t *, uint32_t, int,
+		      struct bgp_route_evpn *);
 extern int bgp_withdraw(struct peer *, struct prefix *, uint32_t, struct attr *,
 			afi_t, safi_t, int, int, struct prefix_rd *,
-			mpls_label_t *, uint32_t, struct bgp_route_evpn *);
+			mpls_label_t *, uint32_t,
+			struct bgp_route_evpn *);
 
 /* for bgp_nexthop and bgp_damp */
 extern void bgp_process(struct bgp *, struct bgp_node *, afi_t, safi_t);

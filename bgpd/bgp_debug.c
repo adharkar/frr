@@ -2501,11 +2501,15 @@ const char *bgp_debug_rdpfxpath2str(afi_t afi, safi_t safi,
 				    union prefixconstptr pu,
 				    mpls_label_t *label, uint32_t num_labels,
 				    int addpath_valid, uint32_t addpath_id,
+				    struct bgp_route_evpn *overlay_index,
 				    char *str, int size)
 {
 	char rd_buf[RD_ADDRSTRLEN];
 	char pfx_buf[PREFIX_STRLEN];
 	char tag_buf[30];
+	char overlay_index_buf[OVERLAY_INDEX_STRLEN];
+	const struct prefix_evpn *evp;
+
 	/* ' with addpath ID '          17
 	 * max strlen of uint32       + 10
 	 * +/- (just in case)         +  1
@@ -2522,6 +2526,21 @@ const char *bgp_debug_rdpfxpath2str(afi_t afi, safi_t safi,
 	if (addpath_valid)
 		snprintf(pathid_buf, sizeof(pathid_buf), " with addpath ID %u",
 			 addpath_id);
+
+	overlay_index_buf[0] = '\0';
+	if (overlay_index && overlay_index->type == OVERLAY_INDEX_GATEWAY_IP) {
+		char obuf[GATEWAY_IP_STRLEN];
+		evp = pu.evp;
+		if (is_evpn_prefix_ipaddr_v4(evp))
+			inet_ntop(AF_INET, &overlay_index->gw_ip, obuf,
+				  sizeof(obuf));
+		else if (is_evpn_prefix_ipaddr_v6(evp))
+			inet_ntop(AF_INET6, &overlay_index->gw_ip, obuf,
+				  sizeof(obuf));
+
+		snprintf(overlay_index_buf, sizeof(overlay_index_buf),
+			 " gateway ip: %s", obuf);
+	}
 
 	tag_buf[0] = '\0';
 	if (bgp_labeled_safi(safi) && num_labels) {
@@ -2540,9 +2559,10 @@ const char *bgp_debug_rdpfxpath2str(afi_t afi, safi_t safi,
 	}
 
 	if (prd)
-		snprintf(str, size, "RD %s %s%s%s %s %s",
+		snprintf(str, size, "RD %s %s%s%s%s %s %s",
 			 prefix_rd2str(prd, rd_buf, sizeof(rd_buf)),
-			 prefix2str(pu, pfx_buf, sizeof(pfx_buf)), tag_buf,
+			 prefix2str(pu, pfx_buf, sizeof(pfx_buf)),
+			 overlay_index_buf, tag_buf,
 			 pathid_buf, afi2str(afi), safi2str(safi));
 	else if (safi == SAFI_FLOWSPEC) {
 		char return_string[BGP_FLOWSPEC_NLRI_STRING_MAX];
