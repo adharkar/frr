@@ -8199,6 +8199,7 @@ void route_vty_out_detail(struct vty *vty, struct bgp *bgp,
 	char buf[INET6_ADDRSTRLEN];
 	char buf1[BUFSIZ];
 	char buf2[EVPN_ROUTE_STRLEN];
+	char buf3[INET6_ADDRSTRLEN];
 	struct attr *attr;
 	int sockunion_vty_out(struct vty *, union sockunion *);
 	time_t tbuf;
@@ -9084,6 +9085,27 @@ void route_vty_out_detail(struct vty *vty, struct bgp *bgp,
 				vty_out(vty,
 					"      PMSI Tunnel Type: %s, label: %d\n",
 					str, label2vni(&attr->label));
+		}
+
+		if (!json_paths)
+			vty_out(vty, "      Printing GW IP if present\n");
+
+		if (attr->evpn_overlay.type == OVERLAY_INDEX_GATEWAY_IP) {
+			if (is_evpn_prefix_ipaddr_v4(
+						(struct prefix_evpn *)&bn->p))
+				inet_ntop(AF_INET,
+					  &attr->evpn_overlay.gw_ip.ipv4, buf3,
+					  sizeof(buf3));
+			else
+				inet_ntop(AF_INET6,
+					  &attr->evpn_overlay.gw_ip.ipv6, buf3,
+					  sizeof(buf3));
+
+			if (json_paths)
+				json_object_string_add(json_path, "gatewayIP",
+						       buf3);
+			else
+				vty_out(vty, "      Gateway IP: %s\n", buf3);
 		}
 	}
 
