@@ -2962,11 +2962,11 @@ static bool overlay_index_equal(afi_t afi, struct bgp_path_info *path,
 	} else
 		path_eth_s_id_remote = eth_s_id;
 
-	if (!memcmp(path_gw_ip, path_gw_ip_remote, sizeof(union gw_addr)))
+	if (memcmp(path_gw_ip, path_gw_ip_remote, sizeof(union gw_addr)) != 0)
 		return false;
 
-	return !memcmp(path_eth_s_id, path_eth_s_id_remote,
-		       sizeof(struct eth_segment_id));
+	return (memcmp(path_eth_s_id, path_eth_s_id_remote,
+		       sizeof(struct eth_segment_id) == 0));
 }
 
 /* Check if received nexthop is valid or not. */
@@ -3223,7 +3223,7 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 					bgp_debug_rdpfxpath2str(
 						afi, safi, prd, p, label,
 						num_labels, addpath_id ? 1 : 0,
-						addpath_id, NULL, pfx_buf,
+						addpath_id, evpn, pfx_buf,
 						sizeof(pfx_buf));
 					zlog_debug("%s rcvd %s", peer->host,
 						   pfx_buf);
@@ -3249,7 +3249,7 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 					bgp_debug_rdpfxpath2str(
 						afi, safi, prd, p, label,
 						num_labels, addpath_id ? 1 : 0,
-						addpath_id, NULL, pfx_buf,
+						addpath_id, evpn, pfx_buf,
 						sizeof(pfx_buf));
 					zlog_debug(
 						"%s rcvd %s...duplicate ignored",
@@ -3275,7 +3275,7 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 			if (bgp_debug_update(peer, p, NULL, 1)) {
 				bgp_debug_rdpfxpath2str(
 					afi, safi, prd, p, label, num_labels,
-					addpath_id ? 1 : 0, addpath_id, NULL,
+					addpath_id ? 1 : 0, addpath_id, evpn,
 					pfx_buf, sizeof(pfx_buf));
 				zlog_debug(
 					"%s rcvd %s, flapped quicker than processing",
@@ -3289,7 +3289,7 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 		if (bgp_debug_update(peer, p, NULL, 1)) {
 			bgp_debug_rdpfxpath2str(afi, safi, prd, p, label,
 						num_labels, addpath_id ? 1 : 0,
-						addpath_id, NULL, pfx_buf,
+						addpath_id, evpn, pfx_buf,
 						sizeof(pfx_buf));
 			zlog_debug("%s rcvd %s", peer->host, pfx_buf);
 		}
@@ -3412,11 +3412,9 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 		}
 #endif
 		/* Update Overlay Index */
-		if (afi == AFI_L2VPN) {
-			overlay_index_update(
-				pi->attr, evpn == NULL ? NULL : &evpn->eth_s_id,
-				evpn == NULL ? NULL : &evpn->gw_ip);
-		}
+		if (afi == AFI_L2VPN && evpn)
+			memcpy(&pi->attr->evpn_overlay, evpn,
+			       sizeof(struct bgp_route_evpn));
 
 		/* Update bgp route dampening information.  */
 		if (CHECK_FLAG(bgp->af_flags[afi][safi], BGP_CONFIG_DAMPENING)
@@ -3542,7 +3540,7 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 		}
 
 		bgp_debug_rdpfxpath2str(afi, safi, prd, p, label, num_labels,
-					addpath_id ? 1 : 0, addpath_id, NULL,
+					addpath_id ? 1 : 0, addpath_id, evpn,
 					pfx_buf, sizeof(pfx_buf));
 		zlog_debug("%s rcvd %s", peer->host, pfx_buf);
 	}
@@ -3563,11 +3561,10 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 	}
 
 	/* Update Overlay Index */
-	if (afi == AFI_L2VPN) {
-		overlay_index_update(new->attr,
-				     evpn == NULL ? NULL : &evpn->eth_s_id,
-				     evpn == NULL ? NULL : &evpn->gw_ip);
-	}
+	if (afi == AFI_L2VPN && evpn)
+		memcpy(&new->attr->evpn_overlay, evpn,
+		       sizeof(struct bgp_route_evpn));
+
 	/* Nexthop reachability check. */
 	if ((afi == AFI_IP || afi == AFI_IP6)
 	    && (safi == SAFI_UNICAST || safi == SAFI_LABELED_UNICAST)) {
@@ -3676,7 +3673,7 @@ filtered:
 		}
 
 		bgp_debug_rdpfxpath2str(afi, safi, prd, p, label, num_labels,
-					addpath_id ? 1 : 0, addpath_id, NULL,
+					addpath_id ? 1 : 0, addpath_id, evpn,
 					pfx_buf, sizeof(pfx_buf));
 		zlog_debug("%s rcvd UPDATE about %s -- DENIED due to: %s",
 			   peer->host, pfx_buf, reason);
@@ -9088,7 +9085,6 @@ void route_vty_out_detail(struct vty *vty, struct bgp *bgp,
 					"      PMSI Tunnel Type: %s, label: %d\n",
 					str, label2vni(&attr->label));
 		}
-
 	}
 
 	/* We've constructed the json object for this path, add it to the json

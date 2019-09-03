@@ -4036,9 +4036,9 @@ static int process_type4_route(struct peer *peer, afi_t afi, safi_t safi,
 	return ret;
 }
 
-
 /*
  * Process received EVPN type-5 route (advertise or withdraw).
+ * Parse the NLRI
  */
 static int process_type5_route(struct peer *peer, afi_t afi, safi_t safi,
 			       struct attr *attr, uint8_t *pfx, int psize,
@@ -4051,6 +4051,9 @@ static int process_type5_route(struct peer *peer, afi_t afi, safi_t safi,
 	uint32_t eth_tag;
 	mpls_label_t label; /* holds the VNI as in the packet */
 	int ret;
+	unsigned char zeroes[16] = {0};
+	bool treat_as_withdraw = false;
+	char pfx_buf[BGP_PRD_PATH_STRLEN];
 
 	/* Type-5 route should be 34 or 58 bytes:
 	 * RD (8), ESI (10), Eth Tag (4), IP len (1), IP (4 or 16),
@@ -4080,8 +4083,11 @@ static int process_type5_route(struct peer *peer, afi_t afi, safi_t safi,
 	memset(&evpn, 0, sizeof(evpn));
 
 	/* Fetch ESI */
-	memcpy(&evpn.eth_s_id.val, pfx, 10);
-	pfx += 10;
+	if (memcmp(pfx, zeroes, ESI_LEN) != 0) {
+		evpn.type = OVERLAY_INDEX_ESI;
+		memcpy(&evpn.eth_s_id.val, pfx, ESI_LEN);
+	}
+	pfx += ESI_LEN;
 
 	/* Fetch Ethernet Tag. */
 	memcpy(&eth_tag, pfx, 4);
@@ -4107,14 +4113,41 @@ static int process_type5_route(struct peer *peer, afi_t afi, safi_t safi,
 		SET_IPADDR_V4(&p.prefix.prefix_addr.ip);
 		memcpy(&p.prefix.prefix_addr.ip.ipaddr_v4, pfx, 4);
 		pfx += 4;
-		memcpy(&evpn.gw_ip.ipv4, pfx, 4);
-		pfx += 4;
+
+		/*
+		 * Set gateway IP
+		 * An update containing a non-zero GW IP and a non-zero ESI
+		 * at the same time is should be treated as withdraw
+		 */
+		if (memcmp(pfx, zeroes, IPV4_MAX_BYTELEN) != 0) {
+			if (evpn.type == OVERLAY_INDEX_ESI) {
+				flog_err(EC_BGP_EVPN_ROUTE_INVALID,
+					 "%s - Rx EVPN Type-5 ESI and gateway-IP both non-zero.",
+					 peer->host);
+				treat_as_withdraw = true;
+			} else {
+				evpn.type = OVERLAY_INDEX_GATEWAY_IP;
+				memcpy(&evpn.gw_ip.ipv4, pfx, IPV4_MAX_BYTELEN);
+				pfx += IPV4_MAX_BYTELEN;
+			}
+		}
 	} else {
 		SET_IPADDR_V6(&p.prefix.prefix_addr.ip);
 		memcpy(&p.prefix.prefix_addr.ip.ipaddr_v6, pfx, 16);
 		pfx += 16;
-		memcpy(&evpn.gw_ip.ipv6, pfx, 16);
-		pfx += 16;
+
+		if (memcmp(pfx, zeroes, IPV6_MAX_BYTELEN) != 0) {
+			if (evpn.type == OVERLAY_INDEX_ESI) {
+				flog_err(EC_BGP_EVPN_ROUTE_INVALID,
+					 "%s - Rx EVPN Type-5 ESI and gateway-IP both non-zero.",
+					 peer->host);
+				treat_as_withdraw = true;
+			} else {
+				evpn.type = OVERLAY_INDEX_GATEWAY_IP;
+				memcpy(&evpn.gw_ip.ipv6, pfx, IPV6_MAX_BYTELEN);
+				pfx += IPV6_MAX_BYTELEN;
+			}
+		}
 	}
 
 	/* Get the VNI (in MPLS label field). Stored as bytes here. */
@@ -4122,20 +4155,45 @@ static int process_type5_route(struct peer *peer, afi_t afi, safi_t safi,
 	memcpy(&label, pfx, BGP_LABEL_BYTES);
 
 	/*
+	 * An update where ESI, gateway-IP, RMAC and label are all zero
+	 * at the same time should be treated as withdraw
+	 */
+	if (attr && (evpn.type == OVERLAY_INDEX_TYPE_NONE) &&
+	    (memcmp(&label, zeroes, sizeof(mpls_label_t)) == 0) &&
+	    (memcmp(&attr->rmac, zeroes, sizeof(struct ethaddr)) == 0)) {
+		flog_err(EC_BGP_EVPN_ROUTE_INVALID,
+			 "%s - Rx EVPN Type-5 ESI, gateway-IP, RMAC and label all zero",
+			 peer->host);
+		treat_as_withdraw = true;
+
+	}
+	/*
 	 * If in future, we are required to access additional fields,
 	 * we MUST increment pfx by BGP_LABEL_BYTES in before reading the next
 	 * field
 	 */
 
 	/* Process the route. */
-	if (attr)
+	if (attr && !treat_as_withdraw)
 		ret = bgp_update(peer, (struct prefix *)&p, addpath_id, attr,
 				 afi, safi, ZEBRA_ROUTE_BGP, BGP_ROUTE_NORMAL,
 				 &prd, &label, 1, 0, &evpn);
-	else
+	else {
+		if (treat_as_withdraw &&
+		    bgp_debug_update(peer, (struct prefix *)&p, NULL, 1)) {
+			bgp_debug_rdpfxpath2str(afi, safi, &prd,
+						(struct prefix *)&p, &label, 1,
+						addpath_id ? 1 : 0, addpath_id,
+						&evpn, pfx_buf,
+						sizeof(pfx_buf));
+			zlog_debug("%s rcvd %s update treat as withdraw",
+				   peer->host, pfx_buf);
+		}
+
 		ret = bgp_withdraw(peer, (struct prefix *)&p, addpath_id, attr,
 				   afi, safi, ZEBRA_ROUTE_BGP, BGP_ROUTE_NORMAL,
 				   &prd, &label, 1, &evpn);
+	}
 
 	return ret;
 }
