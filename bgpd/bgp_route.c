@@ -7515,6 +7515,8 @@ void route_vty_out_tmp(struct vty *vty, struct prefix *p, struct attr *attr,
 	json_object *json_net = NULL;
 	char buff[BUFSIZ];
 	char buf2[BUFSIZ];
+	char buf3[INET6_ADDRSTRLEN];
+
 	/* Route status display. */
 	if (use_json) {
 		json_status = json_object_new_object();
@@ -7527,9 +7529,11 @@ void route_vty_out_tmp(struct vty *vty, struct prefix *p, struct attr *attr,
 
 	/* print prefix and mask */
 	if (use_json) {
-		json_object_string_add(
-			json_net, "addrPrefix",
-			inet_ntop(p->family, &p->u.prefix, buff, BUFSIZ));
+		if (p->family == AF_INET || p->family == AF_INET6)
+			json_object_string_add(
+				json_net, "addrPrefix",
+				inet_ntop(p->family, &p->u.prefix, buff,
+					  BUFSIZ));
 		json_object_int_add(json_net, "prefixLen", p->prefixlen);
 		prefix2str(p, buf2, PREFIX_STRLEN);
 		json_object_string_add(json_net, "network", buf2);
@@ -7601,6 +7605,24 @@ void route_vty_out_tmp(struct vty *vty, struct prefix *p, struct attr *attr,
 			/* Print origin */
 			json_object_string_add(json_net, "bgpOriginCode",
 					       bgp_origin_str[attr->origin]);
+
+			/* Print EVPN RT-5 gateway-IP */
+			if (attr->evpn_overlay.type == OVERLAY_INDEX_GATEWAY_IP) {
+				if (is_evpn_prefix_ipaddr_v4(
+					(struct prefix_evpn *)p)) {
+					json_object_string_add(json_net,
+						"gatewayIP",
+						inet_ntop(AF_INET,
+						&attr->evpn_overlay.gw_ip.ipv4,
+						buf3, sizeof(buf3)));
+				} else {
+					json_object_string_add(json_net,
+						"gatewayIP",
+						inet_ntop(AF_INET6,
+						&attr->evpn_overlay.gw_ip.ipv6,
+						buf3, sizeof(buf3)));
+				}
+			}
 		} else {
 			if (p->family == AF_INET
 			    && (safi == SAFI_MPLS_VPN || safi == SAFI_ENCAP
@@ -7610,7 +7632,7 @@ void route_vty_out_tmp(struct vty *vty, struct prefix *p, struct attr *attr,
 				    || safi == SAFI_EVPN)
 					vty_out(vty, "%-16s",
 						inet_ntoa(
-							attr->mp_nexthop_global_in));
+						attr->mp_nexthop_global_in));
 				else
 					vty_out(vty, "%-16s",
 						inet_ntoa(attr->nexthop));
