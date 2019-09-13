@@ -49,6 +49,7 @@
 #include "bgpd/bgp_nexthop.h"
 #include "bgpd/bgp_addpath.h"
 #include "bgpd/bgp_mac.h"
+#include "bgpd/bgp_nht.h"
 
 /*
  * Definitions and external declarations.
@@ -2473,6 +2474,7 @@ static int install_evpn_route_entry_in_vrf(struct bgp *bgp_vrf,
 	safi_t safi = 0;
 	char buf[PREFIX_STRLEN];
 	char buf1[PREFIX_STRLEN];
+	char buf2[INET6_ADDRSTRLEN];
 
 	memset(pp, 0, sizeof(struct prefix));
 	ip_prefix_from_evpn_prefix(evp, pp);
@@ -2505,10 +2507,37 @@ static int install_evpn_route_entry_in_vrf(struct bgp *bgp_vrf,
 	 * make sure to set the flag for next hop attribute.
 	 */
 	bgp_attr_dup(&attr, parent_pi->attr);
-	if (afi == AFI_IP6)
-		evpn_convert_nexthop_to_ipv6(&attr);
-	else
-		attr.flag |= ATTR_FLAG_BIT(BGP_ATTR_NEXT_HOP);
+
+	/*
+	 * If gateway IP overlay index is specified in the NLRI of
+	 * EVPN RT-5, this gateway IP should be used as the nexthop
+	 * for the prefix in the VRF
+	 */
+	if (attr.evpn_overlay.type == OVERLAY_INDEX_GATEWAY_IP) {
+		if (bgp_debug_zebra(NULL)) {
+			zlog_debug(
+				"Install gateway-ip %s as nexthop for prefix %s in vrf %s",
+				inet_ntop(pp->family, &attr.evpn_overlay.gw_ip,
+					  buf2, sizeof(buf2)),
+				prefix2str(pp, buf1, sizeof(buf1)),
+				vrf_id_to_name(bgp_vrf->vrf_id));
+		}
+
+		if (afi == AFI_IP) {
+			attr.nexthop = attr.evpn_overlay.gw_ip.ipv4;
+			attr.flag |= ATTR_FLAG_BIT(BGP_ATTR_NEXT_HOP);
+		} else {
+			memcpy(&attr.mp_nexthop_global,
+			       &attr.evpn_overlay.gw_ip.ipv6,
+			       sizeof(struct in6_addr));
+			attr.mp_nexthop_len = IPV6_MAX_BYTELEN;
+		}
+	} else {
+		if (afi == AFI_IP6)
+			evpn_convert_nexthop_to_ipv6(&attr);
+		else
+			attr.flag |= ATTR_FLAG_BIT(BGP_ATTR_NEXT_HOP);
+	}
 
 	/* Check if route entry is already present. */
 	for (pi = bgp_node_get_bgp_path_info(rn); pi; pi = pi->next)
@@ -2531,6 +2560,29 @@ static int install_evpn_route_entry_in_vrf(struct bgp *bgp_vrf,
 			memcpy(&pi->extra->label, &parent_pi->extra->label,
 			       sizeof(pi->extra->label));
 			pi->extra->num_labels = parent_pi->extra->num_labels;
+		}
+
+		/*
+		 * Gateway IP nexthop is used to recursively find tunnel and
+		 * innner destination MAC.
+		 * To perform this recursive lookup, we need to find the
+		 * SVI/bridge over which the gateway IP is reachable
+		 */
+		if (attr_new->evpn_overlay.type == OVERLAY_INDEX_GATEWAY_IP) {
+			if (bgp_find_or_add_nexthop(bgp_vrf, bgp_vrf, afi, pi,
+						    NULL, 0))
+				bgp_path_info_set_flag(rn, pi, BGP_PATH_VALID);
+			else {
+				if (BGP_DEBUG(nht, NHT)) {
+					inet_ntop(
+						pp->family,
+						&attr_new->evpn_overlay.gw_ip,
+						buf2, sizeof(buf2));
+						zlog_debug("%s: gateway-ip NH unresolved", buf2);
+				}
+				bgp_path_info_unset_flag(rn, pi,
+							 BGP_PATH_VALID);
+			}
 		}
 		bgp_path_info_add(rn, pi);
 	} else {
@@ -2559,6 +2611,31 @@ static int install_evpn_route_entry_in_vrf(struct bgp *bgp_vrf,
 		/* Unintern existing, set to new. */
 		bgp_attr_unintern(&pi->attr);
 		pi->attr = attr_new;
+
+		/*
+		 * Gateway IP nexthop is used to recursively find tunnel and
+		 * innner destination MAC.
+		 * To perform this recursive lookup, we need to find the
+		 * SVI/bridge over which the gateway IP is reachable
+		 */
+		if (attr_new->evpn_overlay.type == OVERLAY_INDEX_GATEWAY_IP) {
+			if (bgp_find_or_add_nexthop(bgp_vrf, bgp_vrf, afi, pi,
+						    NULL, 0))
+				bgp_path_info_set_flag(rn, pi, BGP_PATH_VALID);
+			else {
+				if (BGP_DEBUG(nht, NHT)) {
+					inet_ntop(
+						pp->family,
+						&attr_new->evpn_overlay.gw_ip,
+						buf2, sizeof(buf2));
+						zlog_debug("%s: gateway-ip NH unresolved",
+							   buf2);
+				}
+				bgp_path_info_unset_flag(rn, pi,
+							 BGP_PATH_VALID);
+			}
+		}
+
 		pi->uptime = bgp_clock();
 	}
 
@@ -3102,7 +3179,8 @@ static int install_uninstall_routes_for_vrf(struct bgp *bgp_vrf, int install)
 
 				if (is_route_matching_for_vrf(bgp_vrf, pi)) {
 					if (bgp_evpn_route_rmac_self_check(
-								bgp_vrf, evp, pi))
+								bgp_vrf, evp,
+								pi))
 						continue;
 
 					if (install)

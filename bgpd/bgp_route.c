@@ -3045,7 +3045,8 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 #if ENABLE_BGP_VNC
 	int vnc_implicit_withdraw = 0;
 #endif
-	int same_attr = 0;
+	bool same_attr = false;
+	bool same_overlay_index = false;
 
 	memset(&new_attr, 0, sizeof(struct attr));
 	new_attr.label_index = BGP_INVALID_LABEL_INDEX;
@@ -3201,7 +3202,15 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 	/* If the update is implicit withdraw. */
 	if (pi) {
 		pi->uptime = bgp_clock();
-		same_attr = attrhash_cmp(pi->attr, attr_new);
+		same_overlay_index =
+			overlay_index_equal(afi, pi,
+					    (evpn == NULL) ?
+					    NULL : &evpn->eth_s_id,
+					    (evpn == NULL) ?
+					    NULL : &evpn->gw_ip);
+
+		same_attr = attrhash_cmp(pi->attr, attr_new) &&
+			    same_overlay_index;
 
 		hook_call(bgp_process, bgp, afi, safi, rn, peer, true);
 
@@ -3212,9 +3221,7 @@ int bgp_update(struct peer *peer, struct prefix *p, uint32_t addpath_id,
 			|| memcmp(&(bgp_path_info_extra_get(pi))->label, label,
 				  num_labels * sizeof(mpls_label_t))
 				   == 0)
-		    && (overlay_index_equal(
-			       afi, pi, evpn == NULL ? NULL : &evpn->eth_s_id,
-			       evpn == NULL ? NULL : &evpn->gw_ip))) {
+		    && same_overlay_index) {
 			if (CHECK_FLAG(bgp->af_flags[afi][safi],
 				       BGP_CONFIG_DAMPENING)
 			    && peer->sort == BGP_PEER_EBGP
