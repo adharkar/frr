@@ -1114,9 +1114,18 @@ static int update_ipv4nh_for_route_install(int nh_othervrf,
 	 * connected routes leaked into a VRF.
 	 */
 	if (is_evpn) {
-		api_nh->type = NEXTHOP_TYPE_IPV4_IFINDEX;
-		api_nh->onlink = true;
-		api_nh->ifindex = nh_bgp->l3vni_svi_ifindex;
+		if (attr->evpn_overlay.type == OVERLAY_INDEX_GATEWAY_IP) {
+			/*
+			 * If the nexthop is EVPN overlay index gateway IP,
+			 * treat the nexthop as NEXTHOP_TYPE_IPV4
+			 */
+			api_nh->type = NEXTHOP_TYPE_IPV4;
+			api_nh->overlay_type = ZAPI_NH_OVERLAY_INDEX_GW_IP;
+		} else {
+			api_nh->type = NEXTHOP_TYPE_IPV4_IFINDEX;
+			api_nh->onlink = true;
+			api_nh->ifindex = nh_bgp->l3vni_svi_ifindex;
+		}
 	} else if (nh_othervrf &&
 		 api_nh->gate.ipv4.s_addr == INADDR_ANY) {
 		api_nh->type = NEXTHOP_TYPE_IFINDEX;
@@ -1140,9 +1149,18 @@ update_ipv6nh_for_route_install(int nh_othervrf, struct bgp *nh_bgp,
 	api_nh->vrf_id = nh_bgp->vrf_id;
 
 	if (is_evpn) {
-		api_nh->type = NEXTHOP_TYPE_IPV6_IFINDEX;
-		api_nh->onlink = true;
-		api_nh->ifindex = nh_bgp->l3vni_svi_ifindex;
+		if (attr->evpn_overlay.type == OVERLAY_INDEX_GATEWAY_IP) {
+			/*
+			 * If the nexthop is EVPN overlay index gateway IP,
+			 * treat the nexthop as NEXTHOP_TYPE_IPV6
+			 */
+			api_nh->type = NEXTHOP_TYPE_IPV6;
+			api_nh->overlay_type = ZAPI_NH_OVERLAY_INDEX_GW_IP;
+		} else {
+			api_nh->type = NEXTHOP_TYPE_IPV6_IFINDEX;
+			api_nh->onlink = true;
+			api_nh->ifindex = nh_bgp->l3vni_svi_ifindex;
+		}
 	} else if (nh_othervrf) {
 		if (IN6_IS_ADDR_UNSPECIFIED(nexthop)) {
 			api_nh->type = NEXTHOP_TYPE_IFINDEX;
@@ -1426,6 +1444,7 @@ void bgp_zebra_announce(struct bgp_node *rn, struct prefix *p,
 		char prefix_buf[PREFIX_STRLEN];
 		char nh_buf[INET6_ADDRSTRLEN];
 		char label_buf[20];
+		char overlay_buf[30];
 		int i;
 
 		prefix2str(&api.prefix, prefix_buf, sizeof(prefix_buf));
@@ -1466,9 +1485,15 @@ void bgp_zebra_announce(struct bgp_node *rn, struct prefix *p,
 			    && !CHECK_FLAG(api.flags, ZEBRA_FLAG_EVPN_ROUTE))
 				sprintf(label_buf, "label %u",
 					api_nh->labels[0]);
-			zlog_debug("  nhop [%d]: %s if %u VRF %u %s",
+
+			if (api_nh->overlay_type == ZAPI_NH_OVERLAY_INDEX_GW_IP)
+				strlcpy(overlay_buf,
+					"overlay index: gateway IP",
+					sizeof(overlay_buf));
+
+			zlog_debug("  nhop [%d]: %s if %u VRF %u %s %s",
 				   i + 1, nh_buf, api_nh->ifindex,
-				   api_nh->vrf_id, label_buf);
+				   api_nh->vrf_id, label_buf, overlay_buf);
 		}
 	}
 

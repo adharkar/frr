@@ -304,6 +304,11 @@ struct zmsghdr {
 	uint16_t command;
 };
 
+enum zapi_nexthop_overlay_index {
+	ZAPI_NH_OVERLAY_INDEX_NONE,
+	ZAPI_NH_OVERLAY_INDEX_GW_IP,
+};
+
 struct zapi_nexthop {
 	enum nexthop_types_t type;
 	vrf_id_t vrf_id;
@@ -319,6 +324,8 @@ struct zapi_nexthop {
 	mpls_label_t labels[MPLS_MAX_LABELS];
 
 	struct ethaddr rmac;
+
+	enum zapi_nexthop_overlay_index overlay_type;
 };
 
 /*
