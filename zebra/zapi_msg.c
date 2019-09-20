@@ -1489,8 +1489,12 @@ static void zread_route_add(ZAPI_HANDLER_ARGS)
 
 			/* Special handling for IPv4 routes sourced from EVPN:
 			 * the nexthop and associated MAC need to be installed.
+			 * Do not install RMAC if the nexthop is
+			 * gateway IP overlay index.
 			 */
-			if (CHECK_FLAG(api.flags, ZEBRA_FLAG_EVPN_ROUTE)) {
+			if (CHECK_FLAG(api.flags, ZEBRA_FLAG_EVPN_ROUTE) &&
+			    api_nh->overlay_type !=
+			    ZAPI_NH_OVERLAY_INDEX_GW_IP) {
 				vtep_ip.ipa_type = IPADDR_V4;
 				memcpy(&(vtep_ip.ipaddr_v4),
 				       &(api_nh->gate.ipv4),
@@ -1513,8 +1517,12 @@ static void zread_route_add(ZAPI_HANDLER_ARGS)
 
 			/* Special handling for IPv6 routes sourced from EVPN:
 			 * the nexthop and associated MAC need to be installed.
+			 * Do not install RMAC if the nexthop is
+			 * gateway IP overlay index.
 			 */
-			if (CHECK_FLAG(api.flags, ZEBRA_FLAG_EVPN_ROUTE)) {
+			if (CHECK_FLAG(api.flags, ZEBRA_FLAG_EVPN_ROUTE) &&
+			    api_nh->overlay_type !=
+			    ZAPI_NH_OVERLAY_INDEX_GW_IP) {
 				vtep_ip.ipa_type = IPADDR_V6;
 				memcpy(&vtep_ip.ipaddr_v6, &(api_nh->gate.ipv6),
 				       sizeof(struct in6_addr));
