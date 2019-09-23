@@ -3608,12 +3608,7 @@ static zebra_vni_t *zvni_map_vlan(struct interface *ifp,
 	return zvni;
 }
 
-/*
- * Map SVI and associated bridge to a VNI. This is invoked upon getting
- * neighbor notifications, to see if they are of interest.
- */
-static zebra_vni_t *zvni_from_svi(struct interface *ifp,
-				  struct interface *br_if)
+vni_t vni_id_from_svi(struct interface *ifp, struct interface *br_if)
 {
 	struct zebra_ns *zns;
 	struct route_node *rn;
@@ -3623,15 +3618,14 @@ static zebra_vni_t *zvni_from_svi(struct interface *ifp,
 	struct zebra_l2info_vxlan *vxl = NULL;
 	uint8_t bridge_vlan_aware;
 	vlanid_t vid = 0;
-	zebra_vni_t *zvni;
 	int found = 0;
 
 	if (!br_if)
-		return NULL;
+		return 0;
 
 	/* Make sure the linked interface is a bridge. */
 	if (!IS_ZEBRA_IF_BRIDGE(br_if))
-		return NULL;
+		return 0;
 
 	/* Determine if bridge is VLAN-aware or not */
 	zif = br_if->info;
@@ -3642,7 +3636,7 @@ static zebra_vni_t *zvni_from_svi(struct interface *ifp,
 		struct zebra_l2info_vlan *vl;
 
 		if (!IS_ZEBRA_IF_VLAN(ifp))
-			return NULL;
+			return 0;
 
 		zif = ifp->info;
 		assert(zif);
@@ -3651,7 +3645,6 @@ static zebra_vni_t *zvni_from_svi(struct interface *ifp,
 	}
 
 	/* See if this interface (or interface plus VLAN Id) maps to a VxLAN */
-	/* TODO: Optimize with a hash. */
 	zns = zebra_ns_lookup(NS_DEFAULT);
 	for (rn = route_top(zns->if_table); rn; rn = route_next(rn)) {
 		tmp_if = (struct interface *)rn->info;
@@ -3674,9 +3667,26 @@ static zebra_vni_t *zvni_from_svi(struct interface *ifp,
 	}
 
 	if (!found)
+		return 0;
+
+	return vxl->vni;
+}
+
+/*
+ * Map SVI and associated bridge to a VNI. This is invoked upon getting
+ * neighbor notifications, to see if they are of interest.
+ */
+static zebra_vni_t *zvni_from_svi(struct interface *ifp,
+				  struct interface *br_if)
+{
+	vni_t vni;
+	zebra_vni_t *zvni;
+
+	vni = vni_id_from_svi(ifp, br_if);
+	if (!vni)
 		return NULL;
 
-	zvni = zvni_lookup(vxl->vni);
+	zvni = zvni_lookup(vni);
 	return zvni;
 }
 
@@ -5041,68 +5051,14 @@ zebra_l3vni_t *zl3vni_from_vrf(vrf_id_t vrf_id)
 static zebra_l3vni_t *zl3vni_from_svi(struct interface *ifp,
 				      struct interface *br_if)
 {
-	int found = 0;
-	vlanid_t vid = 0;
-	uint8_t bridge_vlan_aware = 0;
 	zebra_l3vni_t *zl3vni = NULL;
-	struct zebra_ns *zns = NULL;
-	struct route_node *rn = NULL;
-	struct zebra_if *zif = NULL;
-	struct interface *tmp_if = NULL;
-	struct zebra_l2info_bridge *br = NULL;
-	struct zebra_l2info_vxlan *vxl = NULL;
+	vni_t vni;
 
-	if (!br_if)
+	vni = vni_id_from_svi(ifp, br_if);
+	if (!vni)
 		return NULL;
 
-	/* Make sure the linked interface is a bridge. */
-	if (!IS_ZEBRA_IF_BRIDGE(br_if))
-		return NULL;
-
-	/* Determine if bridge is VLAN-aware or not */
-	zif = br_if->info;
-	assert(zif);
-	br = &zif->l2info.br;
-	bridge_vlan_aware = br->vlan_aware;
-	if (bridge_vlan_aware) {
-		struct zebra_l2info_vlan *vl;
-
-		if (!IS_ZEBRA_IF_VLAN(ifp))
-			return NULL;
-
-		zif = ifp->info;
-		assert(zif);
-		vl = &zif->l2info.vl;
-		vid = vl->vid;
-	}
-
-	/* See if this interface (or interface plus VLAN Id) maps to a VxLAN */
-	/* TODO: Optimize with a hash. */
-	zns = zebra_ns_lookup(NS_DEFAULT);
-	for (rn = route_top(zns->if_table); rn; rn = route_next(rn)) {
-		tmp_if = (struct interface *)rn->info;
-		if (!tmp_if)
-			continue;
-		zif = tmp_if->info;
-		if (!zif || zif->zif_type != ZEBRA_IF_VXLAN)
-			continue;
-		if (!if_is_operative(tmp_if))
-			continue;
-		vxl = &zif->l2info.vxl;
-
-		if (zif->brslave_info.br_if != br_if)
-			continue;
-
-		if (!bridge_vlan_aware || vxl->access_vlan == vid) {
-			found = 1;
-			break;
-		}
-	}
-
-	if (!found)
-		return NULL;
-
-	zl3vni = zl3vni_lookup(vxl->vni);
+	zl3vni = zl3vni_lookup(vni);
 	return zl3vni;
 }
 
