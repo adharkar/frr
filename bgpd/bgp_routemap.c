@@ -3730,8 +3730,7 @@ DEFUN (set_evpn_gw_ip_ipv4,
 	if (su.sin.sin_addr.s_addr == 0
 	    || IPV4_CLASS_DE(ntohl(su.sin.sin_addr.s_addr))) {
 		vty_out(vty,
-			"%% Gateway-ip cannot be 0.0.0.0, multicast or reserved\n"
-			);
+			"%% Gateway-ip cannot be 0.0.0.0, multicast or reserved\n");
 		return CMD_WARNING_CONFIG_FAILED;
 	}
 
@@ -3760,8 +3759,7 @@ DEFUN (set_evpn_gw_ip_ipv6,
 	if (IN6_IS_ADDR_LINKLOCAL(&su.sin6.sin6_addr)
 	    || IN6_IS_ADDR_MULTICAST(&su.sin6.sin6_addr)) {
 		vty_out(vty,
-			"%% Gateway-ip cannot be a linklocal or multicast address\n"
-			);
+			"%% Gateway-ip cannot be a linklocal or multicast address\n");
 		return CMD_WARNING_CONFIG_FAILED;
 	}
 
@@ -3791,8 +3789,7 @@ DEFUN (no_set_evpn_gw_ip_ipv4,
 	if (su.sin.sin_addr.s_addr == 0
 	    || IPV4_CLASS_DE(ntohl(su.sin.sin_addr.s_addr))) {
 		vty_out(vty,
-			"%% Gateway-ip cannot be 0.0.0.0, multicast or reserved\n"
-			);
+			"%% Gateway-ip cannot be 0.0.0.0, multicast or reserved\n");
 		return CMD_WARNING_CONFIG_FAILED;
 	}
 
@@ -3822,8 +3819,7 @@ DEFUN (no_set_evpn_gw_ip_ipv6,
 	if (IN6_IS_ADDR_LINKLOCAL(&su.sin6.sin6_addr)
 	    || IN6_IS_ADDR_MULTICAST(&su.sin6.sin6_addr)) {
 		vty_out(vty,
-			"%% Gateway-ip cannot be a linklocal or multicast address\n"
-			);
+			"%% Gateway-ip cannot be a linklocal or multicast address\n");
 		return CMD_WARNING_CONFIG_FAILED;
 	}
 

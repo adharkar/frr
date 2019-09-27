@@ -2539,7 +2539,7 @@ const char *bgp_debug_rdpfxpath2str(afi_t afi, safi_t safi,
 				  sizeof(obuf));
 
 		snprintf(overlay_index_buf, sizeof(overlay_index_buf),
-			 " gateway ip: %s", obuf);
+			 " gateway IP: %s", obuf);
 	}
 
 	tag_buf[0] = '\0';

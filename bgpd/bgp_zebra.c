@@ -1486,6 +1486,7 @@ void bgp_zebra_announce(struct bgp_node *rn, struct prefix *p,
 				sprintf(label_buf, "label %u",
 					api_nh->labels[0]);
 
+			overlay_buf[0] = '\0';
 			if (api_nh->overlay_type == ZAPI_NH_OVERLAY_INDEX_GW_IP)
 				strlcpy(overlay_buf,
 					"overlay index: gateway IP",

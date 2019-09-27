@@ -2516,7 +2516,7 @@ static int install_evpn_route_entry_in_vrf(struct bgp *bgp_vrf,
 	if (attr.evpn_overlay.type == OVERLAY_INDEX_GATEWAY_IP) {
 		if (bgp_debug_zebra(NULL)) {
 			zlog_debug(
-				"Install gateway-ip %s as nexthop for prefix %s in vrf %s",
+				"install gateway IP %s as nexthop for prefix %s in vrf %s",
 				inet_ntop(pp->family, &attr.evpn_overlay.gw_ip,
 					  buf2, sizeof(buf2)),
 				prefix2str(pp, buf1, sizeof(buf1)),
@@ -2578,7 +2578,8 @@ static int install_evpn_route_entry_in_vrf(struct bgp *bgp_vrf,
 						pp->family,
 						&attr_new->evpn_overlay.gw_ip,
 						buf2, sizeof(buf2));
-						zlog_debug("%s: gateway-ip NH unresolved", buf2);
+						zlog_debug("%s: gateway IP NH unresolved",
+							   buf2);
 				}
 				bgp_path_info_unset_flag(rn, pi,
 							 BGP_PATH_VALID);
@@ -4206,9 +4207,9 @@ static int process_type5_route(struct peer *peer, afi_t afi, safi_t safi,
 			} else {
 				evpn.type = OVERLAY_INDEX_GATEWAY_IP;
 				memcpy(&evpn.gw_ip.ipv4, pfx, IPV4_MAX_BYTELEN);
-				pfx += IPV4_MAX_BYTELEN;
 			}
 		}
+		pfx += IPV4_MAX_BYTELEN;
 	} else {
 		SET_IPADDR_V6(&p.prefix.prefix_addr.ip);
 		memcpy(&p.prefix.prefix_addr.ip.ipaddr_v6, pfx, 16);
@@ -4223,9 +4224,9 @@ static int process_type5_route(struct peer *peer, afi_t afi, safi_t safi,
 			} else {
 				evpn.type = OVERLAY_INDEX_GATEWAY_IP;
 				memcpy(&evpn.gw_ip.ipv6, pfx, IPV6_MAX_BYTELEN);
-				pfx += IPV6_MAX_BYTELEN;
 			}
 		}
+		pfx += IPV6_MAX_BYTELEN;
 	}
 
 	/* Get the VNI (in MPLS label field). Stored as bytes here. */
